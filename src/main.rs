@@ -1,6 +1,6 @@
 #![warn(rust_2018_idioms)]
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{BufStream, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use mc_server_list_ping::*;
@@ -16,7 +16,8 @@ async fn main() -> Result<(), AsyncError> {
     Ok(())
 }
 
-async fn fsm(mut client_stream: TcpStream) -> Result<(), AsyncError> {
+async fn fsm(client_stream: TcpStream) -> Result<(), AsyncError> {
+    let mut client_stream = BufStream::new(client_stream);
     let (handshake_packet, _) = parse_handshake_packet(&mut client_stream).await?;
     println!("{:?}", handshake_packet);
     let (request_packet, _) = parse_request_packet(&mut client_stream).await?;

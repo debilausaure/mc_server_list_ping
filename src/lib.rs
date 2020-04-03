@@ -1,10 +1,10 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 pub type AsyncError = Box<dyn std::error::Error + Send + Sync>;
 
 #[allow(non_snake_case)]
-pub async fn parse_varInt(client_stream: &mut TcpStream) -> Result<(i32, usize), AsyncError> {
+pub async fn parse_varInt<R: AsyncRead + Unpin>(client_stream: &mut R) -> Result<(i32, usize), AsyncError> {
     let mut read_int: i32 = 0;
     let mut bytes_read: usize = 0;
     loop {
@@ -20,7 +20,7 @@ pub async fn parse_varInt(client_stream: &mut TcpStream) -> Result<(i32, usize),
 }
 
 #[allow(non_snake_case)]
-pub async fn write_varInt(client_stream: &mut TcpStream, n: i32) -> Result<usize, AsyncError> {
+pub async fn write_varInt<W: AsyncWrite + Unpin>(client_stream: &mut W, n: i32) -> Result<usize, AsyncError> {
     let mut n = n as u32;
     let mut bytes_sent = 0;
     loop {
@@ -38,7 +38,7 @@ pub async fn write_varInt(client_stream: &mut TcpStream, n: i32) -> Result<usize
 }
 
 #[allow(non_snake_case)]
-pub async fn parse_String(client_stream: &mut TcpStream) -> Result<(String, usize), AsyncError> {
+pub async fn parse_String<R: AsyncRead + Unpin>(client_stream: &mut R) -> Result<(String, usize), AsyncError> {
     let (string_size, bytes_read) = parse_varInt(client_stream).await?;
     let mut string = String::new();
     client_stream
@@ -49,8 +49,8 @@ pub async fn parse_String(client_stream: &mut TcpStream) -> Result<(String, usiz
 }
 
 #[allow(non_snake_case)]
-pub async fn parse_unsignedShort(
-    client_stream: &mut TcpStream,
+pub async fn parse_unsignedShort<R: AsyncRead + Unpin>(
+    client_stream: &mut R,
 ) -> Result<(u16, usize), AsyncError> {
     Ok((client_stream.read_u16().await?, 2))
 }
@@ -77,8 +77,8 @@ pub struct Packet {
     pub data: PacketData,
 }
 
-pub async fn parse_handshake_packet(
-    client_stream: &mut TcpStream,
+pub async fn parse_handshake_packet<R: AsyncRead + Unpin>(
+    client_stream: &mut R,
 ) -> Result<(Packet, usize), AsyncError> {
     let handshake_packet = Packet {
         length: parse_varInt(client_stream).await?.0,
@@ -89,8 +89,8 @@ pub async fn parse_handshake_packet(
     Ok((handshake_packet, packet_length))
 }
 
-pub async fn parse_handshake_data(
-    client_stream: &mut TcpStream,
+pub async fn parse_handshake_data<R: AsyncRead + Unpin>(
+    client_stream: &mut R,
 ) -> Result<(PacketData, usize), AsyncError> {
     let mut bytes_read = 0;
     let (protocol_version, tmp_bytes_read) = parse_varInt(client_stream).await?;
@@ -112,8 +112,8 @@ pub async fn parse_handshake_data(
     ))
 }
 
-pub async fn parse_request_packet(
-    client_stream: &mut TcpStream,
+pub async fn parse_request_packet<R: AsyncRead + Unpin>(
+    client_stream: &mut R,
 ) -> Result<(Packet, usize), AsyncError> {
     let request_packet = Packet {
         length: parse_varInt(client_stream).await?.0,
@@ -124,8 +124,8 @@ pub async fn parse_request_packet(
     Ok((request_packet, packet_length))
 }
 
-pub async fn parse_ping_packet(
-    client_stream: &mut TcpStream,
+pub async fn parse_ping_packet<R: AsyncRead + Unpin>(
+    client_stream: &mut R,
 ) -> Result<(Packet, usize), AsyncError> {
     let ping_packet = Packet {
         length: parse_varInt(client_stream).await?.0,
@@ -136,18 +136,19 @@ pub async fn parse_ping_packet(
     Ok((ping_packet, packet_length))
 }
 
-pub async fn write_pong_packet(
-    client_stream: &mut TcpStream,
+pub async fn write_pong_packet<W: AsyncWrite + Unpin>(
+    client_stream: &mut W,
     ping_id : i64,
 ) -> Result<usize, AsyncError> {
     write_varInt(client_stream, 9).await?;
     write_varInt(client_stream, 1).await?;
     client_stream.write_i64(ping_id).await?;
+    client_stream.flush().await?;
     Ok(10)
 }
     
-pub async fn write_response_packet(
-    client_stream: &mut TcpStream,
+pub async fn write_response_packet<W: AsyncWrite + Unpin>(
+    client_stream: &mut W,
     version_name: &str,
     version_protocol: i32,
     player_max: usize,
@@ -167,13 +168,6 @@ pub async fn write_response_packet(
     bytes_sent += write_varInt(client_stream, 0).await?;
     bytes_sent += write_varInt(client_stream, json.len() as i32).await?;
     client_stream.write_all(json).await?;
+    client_stream.flush().await?;
     Ok(json.len()+bytes_sent)
 }
-
-//#[test]
-//fn test_shr() {
-//    let a: i8 = -128;
-//    let mut a = a as u8;
-//       a >>= 1;
-//    assert_eq!(a, 0b0100_0000);
-//}
