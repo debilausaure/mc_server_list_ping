@@ -20,7 +20,8 @@ pub async fn parse_varInt(client_stream: &mut TcpStream) -> Result<(i32, usize),
 }
 
 #[allow(non_snake_case)]
-pub async fn write_varInt(client_stream: &mut TcpStream, mut n: i32) -> Result<usize, AsyncError> {
+pub async fn write_varInt(client_stream: &mut TcpStream, n: i32) -> Result<usize, AsyncError> {
+    let mut n = n as u32;
     let mut bytes_sent = 0;
     loop {
         bytes_sent += 1;
@@ -33,7 +34,6 @@ pub async fn write_varInt(client_stream: &mut TcpStream, mut n: i32) -> Result<u
             client_stream.write_u8(tmp | 0b1000_0000).await?;
         }
     }
-
     Ok(bytes_sent)
 }
 
@@ -67,13 +67,14 @@ pub struct HandshakeData {
 pub enum PacketData {
     Handshake(Box<HandshakeData>),
     Request,
+    Ping(i64),
 }
 
 #[derive(Debug)]
 pub struct Packet {
-    length: i32,
-    packet_id: i32,
-    data: PacketData,
+    pub length: i32,
+    pub packet_id: i32,
+    pub data: PacketData,
 }
 
 pub async fn parse_handshake_packet(
@@ -122,3 +123,57 @@ pub async fn parse_request_packet(
     let packet_length = request_packet.length as usize;
     Ok((request_packet, packet_length))
 }
+
+pub async fn parse_ping_packet(
+    client_stream: &mut TcpStream,
+) -> Result<(Packet, usize), AsyncError> {
+    let ping_packet = Packet {
+        length: parse_varInt(client_stream).await?.0,
+        packet_id: parse_varInt(client_stream).await?.0,
+        data: PacketData::Ping(client_stream.read_i64().await?),
+    };
+    let packet_length = ping_packet.length as usize;
+    Ok((ping_packet, packet_length))
+}
+
+pub async fn write_pong_packet(
+    client_stream: &mut TcpStream,
+    ping_id : i64,
+) -> Result<usize, AsyncError> {
+    write_varInt(client_stream, 9).await?;
+    write_varInt(client_stream, 1).await?;
+    client_stream.write_i64(ping_id).await?;
+    Ok(10)
+}
+    
+pub async fn write_response_packet(
+    client_stream: &mut TcpStream,
+    version_name: &str,
+    version_protocol: i32,
+    player_max: usize,
+    player_online: usize,
+    description: &str,
+) -> Result<usize, AsyncError> {
+    let json = format!(
+        r#"{{"version":{{"name":"{version_name}","protocol":{version_protocol}}},"players":{{"max":{player_max},"online":{player_online}}},"description":{{"text":"{description}"}}}}"#,
+        version_name = version_name,
+        version_protocol = version_protocol,
+        player_max = player_max,
+        player_online = player_online,
+        description = description
+    );
+    let json = json.as_bytes();
+    let mut bytes_sent = write_varInt(client_stream, json.len() as i32 + 2).await?;
+    bytes_sent += write_varInt(client_stream, 0).await?;
+    bytes_sent += write_varInt(client_stream, json.len() as i32).await?;
+    client_stream.write_all(json).await?;
+    Ok(json.len()+bytes_sent)
+}
+
+//#[test]
+//fn test_shr() {
+//    let a: i8 = -128;
+//    let mut a = a as u8;
+//       a >>= 1;
+//    assert_eq!(a, 0b0100_0000);
+//}

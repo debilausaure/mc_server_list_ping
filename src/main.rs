@@ -1,6 +1,5 @@
 #![warn(rust_2018_idioms)]
 
-
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -22,7 +21,14 @@ async fn fsm(mut client_stream: TcpStream) -> Result<(), AsyncError> {
     println!("{:?}", handshake_packet);
     let (request_packet, _) = parse_request_packet(&mut client_stream).await?;
     println!("{:?}", request_packet);
-    response(client_stream).await
+    write_response_packet(&mut client_stream, "1.15.2", 578, 0, 0, "Server not started").await?;
+    let (ping_packet, _) = parse_ping_packet(&mut client_stream).await?;
+    println!("{:?}", ping_packet);
+    write_pong_packet(&mut client_stream, match ping_packet.data {
+        PacketData::Ping(n) => n,
+        _ => return Err("Not a ping packet !".into()),
+    }).await?;
+    Ok(())
 }
 
 async fn print_bytes(mut client_stream: TcpStream) -> Result<(), AsyncError> {
@@ -35,31 +41,4 @@ async fn print_bytes(mut client_stream: TcpStream) -> Result<(), AsyncError> {
             }
         }
     }
-}
-
-async fn response(mut client_stream: TcpStream) -> Result<(), AsyncError> {
-    let json = br#"{
-    "version": {
-        "name": "1.15.2",
-        "protocol": 578
-    },
-    "players": {
-        "max": 100,
-        "online": 5,
-        "sample": [{}]
-    },  
-    "description": {
-        "text": "A fake server"
-    },
-}"#;
-    dbg!(json.len());
-    write_varInt(&mut client_stream, json.len() as i32 + 2)
-        .await
-        .unwrap();
-    write_varInt(&mut client_stream, 0).await.unwrap();
-    write_varInt(&mut client_stream, json.len() as i32)
-        .await
-        .unwrap();
-    client_stream.write_all(json).await.unwrap();
-    Ok(())
 }
