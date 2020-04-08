@@ -1,7 +1,83 @@
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use std::convert::{TryFrom, TryInto};
 
 pub type AsyncError = Box<dyn std::error::Error + Send + Sync>;
+
+struct VarInt {
+    n : i32,
+}
+
+impl VarInt {
+    pub async fn parse<R: AsyncRead + Unpin>(readable_stream: &mut R) -> Result<(Self, usize), AsyncError> {
+        let mut read_int: i32 = 0;
+        let mut bytes_read: usize = 0;
+        loop {
+            let incoming_byte = readable_stream.read_u8().await?;
+            read_int |= ((incoming_byte & 0b0111_1111) as i32) << 7 * bytes_read;
+            bytes_read += 1;
+            if incoming_byte >> 7 == 0 {
+                return Ok((Self{n:read_int}, bytes_read));
+            } else if bytes_read == 5 {
+                return Err("VarInt bigger than 5 bytes sent".into());
+            }
+        }
+    }
+
+    pub async fn send<W: AsyncWrite + Unpin>(self, writable_stream: &mut W) -> Result<usize, AsyncError> {
+        let mut n = self.n as u32;
+        let mut bytes_sent = 0;
+        loop {
+            bytes_sent += 1;
+            let tmp = n as u8 & 0b0111_1111;
+            n >>= 7;
+            if n == 0 {
+                writable_stream.write_u8(tmp).await?;
+                break;
+            } else {
+                writable_stream.write_u8(tmp | 0b1000_0000).await?;
+            }
+        }
+        Ok(bytes_sent)
+    }
+}
+
+macro_rules! ImplTryFrom{
+    ($from:ty, $into:ty) => {
+        impl TryFrom<$from> for $into {
+            type Error = AsyncError;
+            fn try_from(f: $from) -> Result<Self, Self::Error> {
+                Ok(Self{n: f.try_into()?})
+            }
+        }
+    }
+}
+
+ImplTryFrom!(u64, VarInt);
+ImplTryFrom!(VarInt, u64);
+
+struct String {
+    s : std::string::String,
+}
+
+
+impl String { 
+    pub async fn parse<R: AsyncRead + Unpin>(readable_stream: &mut R) -> Result<(Self, usize), AsyncError> {
+        let (string_size, bytes_read) = VarInt::parse(readable_stream).await?;
+        let mut string = std::string::String::new();
+        readable_stream
+            .take(string_size.try_into()?)
+            .read_to_string(&mut string)
+            .await?;
+        Ok((Self{s : string}, string_size.try_into()? + bytes_read))
+    }
+
+    pub async fn send<W: AsyncWrite + Unpin>(self, writable_stream: &mut W) -> Result<usize, AsyncError> {
+        let mut bytes_sent = 0;
+        bytes_sent += self.s.len().into::<VarInt>().send(writable_stream).await?;
+        Ok(bytes_sent) 
+    }
+}
 
 #[allow(non_snake_case)]
 pub async fn parse_varInt<R: AsyncRead + Unpin>(client_stream: &mut R) -> Result<(i32, usize), AsyncError> {
@@ -48,6 +124,8 @@ pub async fn parse_String<R: AsyncRead + Unpin>(client_stream: &mut R) -> Result
     Ok((string, string_size as usize + bytes_read))
 }
 
+
+
 #[allow(non_snake_case)]
 pub async fn parse_unsignedShort<R: AsyncRead + Unpin>(
     client_stream: &mut R,
@@ -75,6 +153,38 @@ pub struct Packet {
     pub length: i32,
     pub packet_id: i32,
     pub data: PacketData,
+}
+
+impl Packet {
+    pub async fn send<W: AsyncWrite + Unpin>(self, writable_stream : &mut W) -> Result<usize, AsyncError> {
+        let mut bytes_sent = 0;
+        bytes_sent += write_varInt(writable_stream, self.length).await?;
+        bytes_sent += write_varInt(writable_stream, self.packet_id).await?;
+        bytes_sent += self.data.send(writable_stream).await?;
+        Ok(bytes_sent)
+    }
+}
+
+impl PacketData { 
+    pub async fn send<W: AsyncWrite + Unpin>(self, writable_stream : &mut W) -> Result<usize, AsyncError> {
+        match self {
+            PacketData::Handshake(handshake_data) => handshake_data.send(writable_stream).await,
+            PacketData::Request => Ok(0),
+            PacketData::Ping(ping_id) => writable_stream.write_i64(ping_id).await.map(|_| 8).map_err(|err| err.into()),
+        }
+    }
+}
+
+impl HandshakeData {
+    pub async fn send<W: AsyncWrite + Unpin>(self, writable_stream : &mut W) -> Result<usize, AsyncError> {
+        let mut bytes_sent = 0;
+        bytes_sent += write_varInt(writable_stream, self.protocol_version).await?;
+        bytes_sent += write_String(writable_stream, self.server_address).await?;
+        writable_stream.write_u16(self.server_port).await?;
+        bytes_sent += 2;
+        bytes_sent += write_varInt(writable_stream, self.next_state).await?;
+        Ok(bytes_sent)
+    }
 }
 
 pub async fn parse_handshake_packet<R: AsyncRead + Unpin>(
