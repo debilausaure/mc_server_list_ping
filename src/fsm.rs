@@ -43,7 +43,7 @@ impl<'a> Fsm<'a> {
     }
 
     pub async fn run<RW: AsyncRead + AsyncWrite + Unpin>(
-        self,
+        &self,
         mut client_stream: RW,
     ) -> Result<Option<(RW, HandshakePacket)>, AsyncError> {
         let (handshake_packet, _) = HandshakePacket::parse(&mut client_stream).await?;

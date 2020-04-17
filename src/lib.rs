@@ -1,5 +1,5 @@
 mod fsm;
-mod types;
+pub mod types;
 
 pub type AsyncError = Box<dyn std::error::Error + Send + Sync>;
 
