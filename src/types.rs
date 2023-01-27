@@ -2,7 +2,7 @@ use std::convert::{TryFrom, TryInto};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use crate::AsyncError;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct VarInt {
     n: i32,
 }
@@ -71,7 +71,6 @@ macro_rules! ImplTryFrom {
 ImplTryFrom!(u64);
 ImplTryFrom!(usize);
 
-#[derive(Debug)]
 struct String {
     s: std::string::String,
 }
@@ -142,7 +141,6 @@ pub async fn send_Long<W: AsyncWrite + Unpin>(
     Ok(8)
 }
 
-#[derive(Debug)]
 pub struct Header {
     length: VarInt,
     packet_id: VarInt,
@@ -173,7 +171,6 @@ impl Header {
     }
 }
 
-#[derive(Debug)]
 pub struct HandshakePacket {
     header: Header,
     protocol_version: VarInt,
@@ -222,21 +219,19 @@ impl HandshakePacket {
     }
 }
 
-#[derive(Debug)]
 pub struct RequestPacket {
-    header: Header,
+    _header: Header,
 }
 
 impl RequestPacket {
     pub async fn parse<R: AsyncRead + Unpin>(
         readable_stream: &mut R,
     ) -> Result<(Self, usize), AsyncError> {
-        let (header, bytes_read) = Header::parse(readable_stream).await?;
-        Ok((Self { header }, bytes_read))
+        let (_header, bytes_read) = Header::parse(readable_stream).await?;
+        Ok((Self { _header }, bytes_read))
     }
 }
 
-#[derive(Debug)]
 pub struct PingPacket {
     header: Header,
     ping_id: i64,
@@ -263,7 +258,6 @@ impl PingPacket {
     }
 }
 
-#[derive(Debug)]
 pub struct ResponsePacket {
     header : Header,
     json : String,
