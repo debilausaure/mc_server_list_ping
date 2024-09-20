@@ -1,15 +1,17 @@
 use std::convert::{TryFrom, TryInto};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
 use crate::AsyncError;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct VarInt {
-    n: i32,
+    inner: i32,
 }
 
 impl VarInt {
     pub fn from(n: i32) -> Self {
-        Self { n }
+        Self { inner: n }
     }
 
     pub async fn parse<R: AsyncRead + Unpin>(
@@ -22,7 +24,7 @@ impl VarInt {
             read_int |= ((incoming_byte & 0b0111_1111) as i32) << 7 * bytes_read;
             bytes_read += 1;
             if incoming_byte >> 7 == 0 {
-                return Ok((Self { n: read_int }, bytes_read));
+                return Ok((Self { inner: read_int }, bytes_read));
             } else if bytes_read == 5 {
                 return Err("VarInt bigger than 5 bytes sent".into());
             }
@@ -33,7 +35,7 @@ impl VarInt {
         self,
         writable_stream: &mut W,
     ) -> Result<usize, AsyncError> {
-        let mut n = self.n as u32;
+        let mut n = self.inner as u32;
         let mut bytes_sent = 0;
         loop {
             bytes_sent += 1;
@@ -55,14 +57,16 @@ macro_rules! ImplTryFrom {
         impl TryFrom<VarInt> for $prim {
             type Error = AsyncError;
             fn try_from(f: VarInt) -> Result<Self, Self::Error> {
-                Ok(f.n.try_into()?)
+                Ok(f.inner.try_into()?)
             }
         }
 
         impl TryFrom<$prim> for VarInt {
             type Error = AsyncError;
             fn try_from(ty: $prim) -> Result<Self, Self::Error> {
-                Ok(Self { n: ty.try_into()? })
+                Ok(Self {
+                    inner: ty.try_into()?,
+                })
             }
         }
     };
@@ -71,15 +75,14 @@ macro_rules! ImplTryFrom {
 ImplTryFrom!(u64);
 ImplTryFrom!(usize);
 
+#[derive(Debug)]
 struct String {
-    s: std::string::String,
+    inner: std::string::String,
 }
 
 impl String {
-    pub fn new (
-       s : std::string::String
-    ) -> Self {
-        Self{s}
+    pub fn new(s: std::string::String) -> Self {
+        Self { inner: s }
     }
 
     pub async fn parse<R: AsyncRead + Unpin>(
@@ -92,7 +95,7 @@ impl String {
             .take(string_size)
             .read_to_string(&mut string)
             .await?;
-        Ok((Self { s: string }, bytes_read + string_size as usize))
+        Ok((Self { inner: string }, bytes_read + string_size as usize))
     }
 
     pub async fn send<W: AsyncWrite + Unpin>(
@@ -100,11 +103,11 @@ impl String {
         writable_stream: &mut W,
     ) -> Result<usize, AsyncError> {
         let mut bytes_sent = 0;
-        bytes_sent += VarInt::from(self.s.len().try_into()?)
+        bytes_sent += VarInt::from(self.inner.len().try_into()?)
             .send(writable_stream)
             .await?;
-        writable_stream.write_all(self.s.as_bytes()).await?;
-        bytes_sent += self.s.len();
+        writable_stream.write_all(self.inner.as_bytes()).await?;
+        bytes_sent += self.inner.len();
         Ok(bytes_sent)
     }
 }
@@ -141,6 +144,7 @@ pub async fn send_Long<W: AsyncWrite + Unpin>(
     Ok(8)
 }
 
+#[derive(Debug)]
 pub struct Header {
     length: VarInt,
     packet_id: VarInt,
@@ -152,25 +156,26 @@ impl Header {
     ) -> Result<(Self, usize), AsyncError> {
         let (length, bytes_read) = VarInt::parse(readable_stream).await?;
         let (packet_id, bytes_read_tmp) = VarInt::parse(readable_stream).await?;
-        let header = Self {
-            length, 
-            packet_id, 
-        };
+        let header = Self { length, packet_id };
         Ok((header, bytes_read + bytes_read_tmp))
     }
 
-    pub async fn send<W: AsyncWrite + Unpin>(self, writable_stream: &mut W) -> Result<usize, AsyncError> {
+    pub async fn send<W: AsyncWrite + Unpin>(
+        self,
+        writable_stream: &mut W,
+    ) -> Result<usize, AsyncError> {
         let mut bytes_sent = 0;
         bytes_sent += self.length.send(writable_stream).await?;
         bytes_sent += self.packet_id.send(writable_stream).await?;
         Ok(bytes_sent)
     }
 
-    pub fn new(length : VarInt, packet_id : VarInt) -> Self {
-        Self {length, packet_id}
+    pub fn new(length: VarInt, packet_id: VarInt) -> Self {
+        Self { length, packet_id }
     }
 }
 
+#[derive(Debug)]
 pub struct HandshakePacket {
     header: Header,
     protocol_version: VarInt,
@@ -259,12 +264,12 @@ impl PingPacket {
 }
 
 pub struct ResponsePacket {
-    header : Header,
-    json : String,
+    header: Header,
+    json: String,
 }
 
 impl ResponsePacket {
-    pub fn new (
+    pub fn new(
         version_name: &str,
         version_protocol: i32,
         player_max: usize,
@@ -282,10 +287,7 @@ impl ResponsePacket {
         let string_size = json.len();
         let json = String::new(json);
         let header = Header::new(VarInt::from(string_size as i32 + 2), VarInt::from(0)); //FIXME
-        Self {
-            header,
-            json,
-        }
+        Self { header, json }
     }
 
     pub async fn send<W: AsyncWrite + Unpin>(

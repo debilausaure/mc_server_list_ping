@@ -1,9 +1,6 @@
-use crate::types::*;
-use crate::AsyncError;
-
-use std::convert::{TryInto};
 use tokio::io::{AsyncRead, AsyncWrite};
 
+use crate::{types::*, AsyncError};
 
 pub struct Fsm<'a> {
     version_name: &'a str,
